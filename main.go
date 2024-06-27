@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/DomenicoDicosimo/Chirpy-Bootdev/internal/db"
 )
 
 type apiConfig struct {
 	fileserverHits int
+	db             *db.DB
 }
 
 func myhandler(w http.ResponseWriter, r *http.Request) {
@@ -19,13 +22,9 @@ func myhandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
-func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
-	}
-
-	type returnVals struct {
-		Cleaned_Body string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -39,11 +38,25 @@ func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, 400, "Chirp is too long")
 		return
 	}
+	scrubbedString := scrubString(params.Body)
 
-	respondWithJSON(w, http.StatusOK, returnVals{
-		Cleaned_Body: scrubString(params.Body),
-	})
+	chirp, err := cfg.db.CreateChirp(scrubbedString)
+	if err != nil {
+		sendJSONError(w, 500, "Could not create chirp")
+		return
+	}
 
+	respondWithJSON(w, http.StatusCreated, chirp)
+}
+
+func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request) {
+	chirps, err := cfg.db.GetChirps()
+	if err != nil {
+		sendJSONError(w, 500, "Could not get chirp")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, chirps)
 }
 
 func scrubString(message string) string {
@@ -96,8 +109,12 @@ func sendJSONError(w http.ResponseWriter, statusCode int, errorMessage string) {
 
 func main() {
 	mux := http.NewServeMux()
+	db, err := db.NewDB("./db.json")
+	if err != nil {
+		panic(err)
+	}
 
-	cfg := &apiConfig{}
+	cfg := &apiConfig{db: db}
 
 	mux.HandleFunc("GET /api/healthz", myhandler)
 
@@ -106,7 +123,8 @@ func main() {
 
 	mux.HandleFunc("GET /admin/metrics", cfg.metricsHandler)
 	mux.HandleFunc("GET /api/reset", cfg.resetHandler)
-	mux.HandleFunc("POST /api/validate_chirp", validateChirpHandler)
+	mux.HandleFunc("POST /api/chirps", cfg.chirpHandler)
+	mux.HandleFunc("GET /api/chirps", cfg.getChirpsHandler)
 
 	server := &http.Server{
 		Addr:    ":8080",
