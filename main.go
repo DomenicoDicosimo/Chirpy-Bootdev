@@ -1,19 +1,15 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
+	"log"
 	"net/http"
+	"slices"
+	"strings"
 )
 
 type apiConfig struct {
 	fileserverHits int
-}
-
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.fileserverHits++
-		next.ServeHTTP(w, r)
-	})
 }
 
 func myhandler(w http.ResponseWriter, r *http.Request) {
@@ -23,26 +19,79 @@ func myhandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
-func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
-	hits := cfg.fileserverHits
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
+func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
 
-	htmlContent := fmt.Sprintf(`
-    <html>
-        <body>
-            <h1>Welcome, Chirpy Admin</h1>
-            <p>Chirpy has been visited %d times!</p>
-        </body>
-    </html>`, hits)
+	type returnVals struct {
+		Cleaned_Body string `json:"cleaned_body"`
+	}
 
-	w.Write([]byte(htmlContent))
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		sendJSONError(w, 400, "Something went wrong")
+		return
+	}
+	if len(params.Body) > 140 {
+		sendJSONError(w, 400, "Chirp is too long")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, returnVals{
+		Cleaned_Body: scrubString(params.Body),
+	})
+
 }
 
-func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
-	cfg.fileserverHits = 0
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Hits reset to 0"))
+func scrubString(message string) string {
+	badwords := [3]string{"kerfuffle", "sharbert", "fornax"}
+	words := strings.Split(message, " ")
+
+	lowercaseMessage := strings.ToLower(message)
+	lowerWords := strings.Split(lowercaseMessage, " ")
+
+	for i, word := range lowerWords {
+		if slices.Contains(badwords[:], word) {
+			words[i] = "****"
+		}
+	}
+	cleanedWords := strings.Join(words, " ")
+	return cleanedWords
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
+func sendJSONError(w http.ResponseWriter, statusCode int, errorMessage string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	// Create the error message object
+	response := map[string]string{"error": errorMessage}
+
+	// Convert it to JSON
+	jsonResponse, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "Internal server error"}`))
+		return
+	}
+
+	// Write it to the response
+	w.Write(jsonResponse)
 }
 
 func main() {
@@ -57,6 +106,7 @@ func main() {
 
 	mux.HandleFunc("GET /admin/metrics", cfg.metricsHandler)
 	mux.HandleFunc("GET /api/reset", cfg.resetHandler)
+	mux.HandleFunc("POST /api/validate_chirp", validateChirpHandler)
 
 	server := &http.Server{
 		Addr:    ":8080",
