@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 
@@ -15,6 +16,7 @@ type DB struct {
 
 type DBStructure struct {
 	Chirps map[int]models.Chirp `json:"chirps"`
+	Users  map[int]models.User  `json:"users"`
 }
 
 // NewDB creates a new database connection
@@ -25,45 +27,15 @@ func NewDB(path string) (*DB, error) {
 		mux:  &sync.RWMutex{},
 	}
 
+	if err := os.Remove("./db.json"); err != nil && !os.IsNotExist(err) {
+		log.Fatal("Failed to delete existing database file:", err)
+	}
+
 	if err := db.ensureDB(); err != nil {
 		return nil, err
 	}
 
 	return db, nil
-}
-
-// CreateChirp creates a new chirp and saves it to disk
-func (db *DB) CreateChirp(body string) (models.Chirp, error) {
-	dbStructure, err := db.loadDB()
-	if err != nil {
-		return models.Chirp{}, err
-	}
-
-	newID := len(dbStructure.Chirps) + 1
-	chirp := models.Chirp{ID: newID, Body: body}
-	dbStructure.Chirps[newID] = chirp
-
-	if err := db.writeDB(&dbStructure); err != nil {
-		return models.Chirp{}, err
-	}
-
-	return chirp, nil
-
-}
-
-// GetChirps returns all chirps in the database
-func (db *DB) GetChirps() ([]models.Chirp, error) {
-	dbStructure, err := db.loadDB()
-	if err != nil {
-		return nil, err
-	}
-
-	chirps := make([]models.Chirp, 0, len(dbStructure.Chirps))
-	for _, chirp := range dbStructure.Chirps {
-		chirps = append(chirps, chirp)
-	}
-
-	return chirps, nil
 }
 
 // ensureDB creates a new database file if it doesn't exist
@@ -75,7 +47,10 @@ func (db *DB) ensureDB() error {
 		}
 		defer file.Close()
 
-		initialData := DBStructure{Chirps: make(map[int]models.Chirp)}
+		initialData := DBStructure{
+			Chirps: make(map[int]models.Chirp),
+			Users:  make(map[int]models.User),
+		}
 		jsonData, err := json.Marshal(initialData)
 		if err != nil {
 			return err
