@@ -1,39 +1,38 @@
-package db
+package database
 
-import (
-	"github.com/DomenicoDicosimo/Chirpy-Bootdev/internal/models"
-)
+type Chirp struct {
+	ID   int    `json:"id"`
+	Body string `json:"body"`
+}
 
-// CreateChirp creates a new chirp and saves it to disk
-func (db *DB) CreateChirp(body string) (models.Chirp, error) {
+func (db *DB) CreateChirp(body string) (Chirp, error) {
 	dbStructure, err := db.loadDB()
 	if err != nil {
-		return models.Chirp{}, err
+		return Chirp{}, err
 	}
 
-	newID := len(dbStructure.Chirps) + 1
-	chirp := models.Chirp{ID: newID, Body: body}
-	dbStructure.Chirps[newID] = chirp
+	id := len(dbStructure.Chirps) + 1
+	chirp := Chirp{
+		ID:   id,
+		Body: body,
+	}
+	dbStructure.Chirps[id] = chirp
 
-	if err := db.writeDB(&dbStructure); err != nil {
-		return models.Chirp{}, err
+	err = db.writeDB(dbStructure)
+	if err != nil {
+		return Chirp{}, err
 	}
 
 	return chirp, nil
-
 }
 
-// GetChirps returns all chirps in the database
-func (db *DB) GetChirps() ([]models.Chirp, error) {
-	db.mux.RLock()
-	defer db.mux.RUnlock()
-
+func (db *DB) GetChirps() ([]Chirp, error) {
 	dbStructure, err := db.loadDB()
 	if err != nil {
 		return nil, err
 	}
 
-	chirps := make([]models.Chirp, 0, len(dbStructure.Chirps))
+	chirps := make([]Chirp, 0, len(dbStructure.Chirps))
 	for _, chirp := range dbStructure.Chirps {
 		chirps = append(chirps, chirp)
 	}
@@ -41,19 +40,15 @@ func (db *DB) GetChirps() ([]models.Chirp, error) {
 	return chirps, nil
 }
 
-// GetChirps returns a chirp in the database by ID
-func (db *DB) GetChirpByID(id int) (models.Chirp, error) {
-	db.mux.RLock()
-	defer db.mux.RUnlock()
-
+func (db *DB) GetChirp(id int) (Chirp, error) {
 	dbStructure, err := db.loadDB()
 	if err != nil {
-		return models.Chirp{}, err
+		return Chirp{}, err
 	}
 
-	chirp, exists := dbStructure.Chirps[id]
-	if !exists {
-		return models.Chirp{}, nil
+	chirp, ok := dbStructure.Chirps[id]
+	if !ok {
+		return Chirp{}, ErrNotExist
 	}
 
 	return chirp, nil

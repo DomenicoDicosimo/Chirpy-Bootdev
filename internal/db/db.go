@@ -1,101 +1,88 @@
-package db
+package database
 
 import (
 	"encoding/json"
-	"log"
+	"errors"
 	"os"
 	"sync"
-
-	"github.com/DomenicoDicosimo/Chirpy-Bootdev/internal/models"
 )
+
+var ErrNotExist = errors.New("resource does not exist")
 
 type DB struct {
 	path string
-	mux  *sync.RWMutex
+	mu   *sync.RWMutex
 }
 
 type DBStructure struct {
-	Chirps map[int]models.Chirp `json:"chirps"`
-	Users  map[int]models.User  `json:"users"`
+	Chirps        map[int]Chirp           `json:"chirps"`
+	Users         map[int]User            `json:"users"`
+	RefreshTokens map[string]RefreshToken `json:"refresh_tokens"`
 }
 
-// NewDB creates a new database connection
-// and creates the database file if it doesn't exist
 func NewDB(path string) (*DB, error) {
 	db := &DB{
 		path: path,
-		mux:  &sync.RWMutex{},
+		mu:   &sync.RWMutex{},
 	}
-
-	if err := os.Remove("./db.json"); err != nil && !os.IsNotExist(err) {
-		log.Fatal("Failed to delete existing database file:", err)
-	}
-
-	if err := db.ensureDB(); err != nil {
-		return nil, err
-	}
-
-	return db, nil
+	err := db.ensureDB()
+	return db, err
 }
 
-// ensureDB creates a new database file if it doesn't exist
+func (db *DB) createDB() error {
+	dbStructure := DBStructure{
+		Chirps:        map[int]Chirp{},
+		Users:         map[int]User{},
+		RefreshTokens: map[string]RefreshToken{},
+	}
+	return db.writeDB(dbStructure)
+}
+
 func (db *DB) ensureDB() error {
-	if _, err := os.Stat(db.path); os.IsNotExist(err) {
-		file, err := os.Create(db.path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		initialData := DBStructure{
-			Chirps: make(map[int]models.Chirp),
-			Users:  make(map[int]models.User),
-		}
-		jsonData, err := json.Marshal(initialData)
-		if err != nil {
-			return err
-		}
-
-		if _, err := file.Write(jsonData); err != nil {
-			return err
-		}
+	_, err := os.ReadFile(db.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return db.createDB()
 	}
-	return nil
+	return err
 }
 
-// loadDB reads the database file into memory
-func (db *DB) loadDB() (DBStructure, error) {
-	db.mux.RLock()
-	defer db.mux.RUnlock()
-
-	file, err := os.Open(db.path)
-	if err != nil {
-		return DBStructure{}, err
+func (db *DB) ResetDB() error {
+	err := os.Remove(db.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	defer file.Close()
+	return db.ensureDB()
+}
 
-	var dbStructure DBStructure
-	if err := json.NewDecoder(file).Decode(&dbStructure); err != nil {
-		return DBStructure{}, err
+func (db *DB) loadDB() (DBStructure, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	dbStructure := DBStructure{}
+	dat, err := os.ReadFile(db.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return dbStructure, err
+	}
+	err = json.Unmarshal(dat, &dbStructure)
+	if err != nil {
+		return dbStructure, err
 	}
 
 	return dbStructure, nil
 }
 
-// writeDB writes the database file to disk
-func (db *DB) writeDB(dbStructure *DBStructure) error {
-	db.mux.Lock()
-	defer db.mux.Unlock()
+func (db *DB) writeDB(dbStructure DBStructure) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
-	file, err := os.OpenFile(db.path, os.O_WRONLY|os.O_TRUNC, 0644)
+	dat, err := json.Marshal(dbStructure)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	if err := json.NewEncoder(file).Encode(dbStructure); err != nil {
+	err = os.WriteFile(db.path, dat, 0600)
+	if err != nil {
 		return err
 	}
-
 	return nil
 }

@@ -2,10 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
-	"slices"
 	"strings"
 )
+
+type Chirp struct {
+	ID   int    `json:"id"`
+	Body string `json:"body"`
+}
 
 func (cfg *apiConfig) handlerChirpsCreate(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
@@ -16,36 +21,51 @@ func (cfg *apiConfig) handlerChirpsCreate(w http.ResponseWriter, r *http.Request
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		sendJSONError(w, 400, "Something went wrong")
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
 		return
 	}
-	if len(params.Body) > 140 {
-		sendJSONError(w, 400, "Chirp is too long")
-		return
-	}
-	scrubbedString := scrubString(params.Body)
 
-	chirp, err := cfg.db.CreateChirp(scrubbedString)
+	cleaned, err := validateChirp(params.Body)
 	if err != nil {
-		sendJSONError(w, 500, "Could not create chirp")
+		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondWithJSON(w, http.StatusCreated, chirp)
+	chirp, err := cfg.DB.CreateChirp(cleaned)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create chirp")
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, Chirp{
+		ID:   chirp.ID,
+		Body: chirp.Body,
+	})
 }
 
-func scrubString(message string) string {
-	badwords := [3]string{"kerfuffle", "sharbert", "fornax"}
-	words := strings.Split(message, " ")
+func validateChirp(body string) (string, error) {
+	const maxChirpLength = 140
+	if len(body) > maxChirpLength {
+		return "", errors.New("Chirp is too long")
+	}
 
-	lowercaseMessage := strings.ToLower(message)
-	lowerWords := strings.Split(lowercaseMessage, " ")
+	badWords := map[string]struct{}{
+		"kerfuffle": {},
+		"sharbert":  {},
+		"fornax":    {},
+	}
+	cleaned := getCleanedBody(body, badWords)
+	return cleaned, nil
+}
 
-	for i, word := range lowerWords {
-		if slices.Contains(badwords[:], word) {
+func getCleanedBody(body string, badWords map[string]struct{}) string {
+	words := strings.Split(body, " ")
+	for i, word := range words {
+		loweredWord := strings.ToLower(word)
+		if _, ok := badWords[loweredWord]; ok {
 			words[i] = "****"
 		}
 	}
-	cleanedWords := strings.Join(words, " ")
-	return cleanedWords
+	cleaned := strings.Join(words, " ")
+	return cleaned
 }

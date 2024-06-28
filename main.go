@@ -1,42 +1,77 @@
 package main
 
 import (
+	"flag"
+	"log"
 	"net/http"
+	"os"
 
-	"github.com/DomenicoDicosimo/Chirpy-Bootdev/internal/db"
+	database "github.com/DomenicoDicosimo/Chirpy-Bootdev/internal/db"
+	"github.com/joho/godotenv"
 )
 
 type apiConfig struct {
 	fileserverHits int
-	db             *db.DB
+	DB             *database.DB
+	jwtSecret      string
 }
 
 func main() {
-	mux := http.NewServeMux()
-	db, err := db.NewDB("./db.json")
-	if err != nil {
-		panic(err)
+	const filepathRoot = "."
+	const port = "8080"
+
+	godotenv.Load(".env")
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is not set")
 	}
 
-	cfg := &apiConfig{db: db}
+	db, err := database.NewDB("database.json")
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	mux.HandleFunc("GET /api/healthz", myhandler)
+	dbg := flag.Bool("debug", false, "Enable debug mode")
+	flag.Parse()
+	if dbg != nil && *dbg {
+		err := db.ResetDB()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 
-	fileServer := http.FileServer(http.Dir("."))
-	mux.Handle("/app/", cfg.middlewareMetricsInc(http.StripPrefix("/app", fileServer)))
+	apiCfg := apiConfig{
+		fileserverHits: 0,
+		DB:             db,
+		jwtSecret:      jwtSecret,
+	}
 
-	mux.HandleFunc("GET /admin/metrics", cfg.metricsHandler)
-	mux.HandleFunc("GET /api/reset", cfg.resetHandler)
-	mux.HandleFunc("POST /api/chirps", cfg.handlerChirpsCreate)
-	mux.HandleFunc("GET /api/chirps", cfg.handlerChirpsGet)
-	mux.HandleFunc("GET /api/chirps/{id}", cfg.handlerChirpsRetrieve)
-	mux.HandleFunc("POST /api/users", cfg.usersHandler)
+	mux := http.NewServeMux()
+	fsHandler := apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
+	mux.Handle("/app/*", fsHandler)
 
-	server := &http.Server{
-		Addr:    ":8080",
+	mux.HandleFunc("GET /api/healthz", handlerReadiness)
+	mux.HandleFunc("GET /api/reset", apiCfg.handlerReset)
+
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)
+
+	mux.HandleFunc("POST /api/users", apiCfg.handlerUsersCreate)
+	mux.HandleFunc("PUT /api/users", apiCfg.handlerUsersUpdate)
+
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerChirpsCreate)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerChirpsRetrieve)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerChirpsGet)
+
+	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
+
+	srv := &http.Server{
+		Addr:    ":" + port,
 		Handler: mux,
 	}
 
-	server.ListenAndServe()
-
+	log.Printf("Serving files from %s on port: %s\n", filepathRoot, port)
+	log.Fatal(srv.ListenAndServe())
 }
