@@ -3,9 +3,23 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/DomenicoDicosimo/Chirpy-Bootdev/internal/auth"
 )
 
 func (cfg *apiConfig) handlerWebhooks(w http.ResponseWriter, r *http.Request) {
+
+	key, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't find API Key")
+		return
+	}
+
+	if key != cfg.polkaAPI {
+		respondWithError(w, http.StatusUnauthorized, "Invalid Key")
+		return
+	}
+
 	type parameters struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -15,7 +29,7 @@ func (cfg *apiConfig) handlerWebhooks(w http.ResponseWriter, r *http.Request) {
 
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
 		return
